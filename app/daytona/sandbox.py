@@ -14,32 +14,34 @@ from app.config import config
 from app.utils.logger import logger
 
 
-# load_dotenv()
-daytona_settings = config.daytona
-logger.info("Initializing Daytona sandbox configuration")
-daytona_config = DaytonaConfig(
-    api_key=daytona_settings.daytona_api_key,
-    server_url=daytona_settings.daytona_server_url,
-    target=daytona_settings.daytona_target,
-)
+_daytona = None
 
-if daytona_config.api_key:
-    logger.info("Daytona API key configured successfully")
-else:
-    logger.warning("No Daytona API key found in environment variables")
 
-if daytona_config.server_url:
-    logger.info(f"Daytona server URL set to: {daytona_config.server_url}")
-else:
-    logger.warning("No Daytona server URL found in environment variables")
-
-if daytona_config.target:
-    logger.info(f"Daytona target set to: {daytona_config.target}")
-else:
-    logger.warning("No Daytona target found in environment variables")
-
-daytona = Daytona(daytona_config)
-logger.info("Daytona client initialized")
+def get_daytona() -> Daytona:
+    """Create the Daytona client on first use so importing this module works
+    without a Daytona API key."""
+    global _daytona
+    if _daytona is None:
+        daytona_settings = config.daytona
+        if not daytona_settings.daytona_api_key:
+            raise ValueError(
+                "Daytona API key is not configured. Add a [daytona] section with "
+                "daytona_api_key to config/config.toml "
+                "(see config/config.example-daytona.toml)."
+            )
+        logger.info("Initializing Daytona sandbox configuration")
+        daytona_config = DaytonaConfig(
+            api_key=daytona_settings.daytona_api_key,
+            server_url=daytona_settings.daytona_server_url,
+            target=daytona_settings.daytona_target,
+        )
+        logger.info(
+            f"Daytona server URL: {daytona_config.server_url}, "
+            f"target: {daytona_config.target}"
+        )
+        _daytona = Daytona(daytona_config)
+        logger.info("Daytona client initialized")
+    return _daytona
 
 
 async def get_or_start_sandbox(sandbox_id: str):
@@ -48,7 +50,7 @@ async def get_or_start_sandbox(sandbox_id: str):
     logger.info(f"Getting or starting sandbox with ID: {sandbox_id}")
 
     try:
-        sandbox = daytona.get(sandbox_id)
+        sandbox = get_daytona().get(sandbox_id)
 
         # Check if sandbox needs to be started
         if (
@@ -57,11 +59,11 @@ async def get_or_start_sandbox(sandbox_id: str):
         ):
             logger.info(f"Sandbox is in {sandbox.state} state. Starting...")
             try:
-                daytona.start(sandbox)
+                get_daytona().start(sandbox)
                 # Wait a moment for the sandbox to initialize
                 # sleep(5)
                 # Refresh sandbox state after starting
-                sandbox = daytona.get(sandbox_id)
+                sandbox = get_daytona().get(sandbox_id)
 
                 # Start supervisord in a session when restarting
                 start_supervisord_session(sandbox)
@@ -111,7 +113,7 @@ def create_sandbox(password: str, project_id: str = None):
         labels = {"id": project_id}
 
     params = CreateSandboxFromImageParams(
-        image=daytona_settings.sandbox_image_name,
+        image=config.daytona.sandbox_image_name,
         public=True,
         labels=labels,
         env_vars={
@@ -137,7 +139,7 @@ def create_sandbox(password: str, project_id: str = None):
     )
 
     # Create the sandbox
-    sandbox = daytona.create(params)
+    sandbox = get_daytona().create(params)
     logger.info(f"Sandbox created with ID: {sandbox.id}")
 
     # Start supervisord in a session for new sandbox
@@ -153,10 +155,10 @@ async def delete_sandbox(sandbox_id: str):
 
     try:
         # Get the sandbox
-        sandbox = daytona.get(sandbox_id)
+        sandbox = get_daytona().get(sandbox_id)
 
         # Delete the sandbox
-        daytona.delete(sandbox)
+        get_daytona().delete(sandbox)
 
         logger.info(f"Successfully deleted sandbox {sandbox_id}")
         return True
